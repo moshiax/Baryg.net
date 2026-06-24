@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Барыг.net — страшные объявления рядом</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">БАРЫГ<span>.net</span></span><div><h1>Страшно рядом</h1><p id="slogan">Почти как OLX, только страшно.</p></div>
+      </div>
+      <button id="shuffleBtn" class="ghost-btn" type="button">🩸 Перемешать выдачу</button>
+    </header>
+
+    <main>
+      <section class="controls">
+        <input id="search" type="search" placeholder="Поиск по заголовку, описанию, адресу..." />
+        <select id="categoryFilter">
+          <option value="all">Все категории</option>
+          <option value="service">Услуги</option>
+          <option value="lost">Пропажи</option>
+          <option value="medical">Медицина</option>
+          <option value="food">Еда</option>
+          <option value="mystic">Мистика</option>
+          <option value="trade">Куплю/продам</option>
+        </select>
+      </section>
+
+      <section>
+        <div class="section-title"><h2>Лента объявлений</h2><span id="warning">Не все объявления были написаны людьми.</span></div>
+        <div id="board" class="board" aria-live="polite"></div><div id="sentinel" class="sentinel">Подгружаем ещё объявления из подвала…</div>
+      </section>
+    </main>
+
+    <template id="cardTemplate">
+      <article class="card">
+        <img class="thumb" alt="Иллюстрация к объявлению" />
+        <div class="card-head">
+          <span class="chip"></span>
+          <span class="price"></span>
+        </div>
+        <h3></h3>
+        <p class="desc"></p>
+        <p class="meta"></p>
+        <div class="tabs"></div>
+      </article>
+    </template>
+
+    <script src="data.js"></script>
+    <script src="script.js"></script>
+  </body>
+</html>
