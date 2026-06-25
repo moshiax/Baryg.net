@@ -485,53 +485,60 @@ function mysteryNumber() {
   return pick(mysteryNumbers);
 }
 
+const markovModels = new Map();
+const splitCharsCache = new Map();
+
+function charsOf(text) {
+  if (!splitCharsCache.has(text)) splitCharsCache.set(text, text.split(""));
+  return splitCharsCache.get(text);
+}
+
+function markovModel(source) {
+  const key = source.join("\u0000");
+  if (markovModels.has(key)) return markovModels.get(key);
+
+  const normalized = source.join(" ").toLowerCase();
+  const words = normalized
+    .replace(/[^а-яёa-z\s-]/g, "")
+    .split(/\s+/)
+    .filter(word => word.length > 3);
+
+  const latinCount = (normalized.match(/[a-z]/g) || []).length;
+  const cyrillicCount = (normalized.match(/[а-яё]/g) || []).length;
+  const fallbackAlphabet = latinCount >= cyrillicCount
+    ? charsOf("abcdefghijklmnopqrstuvwxyz")
+    : charsOf("абвгдежзийклмнопрстуфхцчшщыэюя");
+
+  const transitions = new Map();
+  const starts = words.map(word => word.slice(0, 2));
+  words.forEach((word) => {
+    for (let index = 0; index < word.length - 2; index += 1) {
+      const pair = word.slice(index, index + 2);
+      if (!transitions.has(pair)) transitions.set(pair, []);
+      transitions.get(pair).push(word[index + 2]);
+    }
+  });
+
+  const model = { starts, fallbackAlphabet, transitions };
+  markovModels.set(key, model);
+  return model;
+}
+
 function markovWord(source, min = 5, max = 12) {
-	const normalized = source.join(" ").toLowerCase();
+  const model = markovModel(source);
+  if (!model.starts.length) return "";
 
-	const words = normalized
-		.replace(/[^а-яёa-z\s-]/g, "")
-		.split(/\s+/)
-		.filter(word => word.length > 3);
+  let pair = pick(model.starts);
+  let word = pair;
+  const target = min + Math.floor(activeRng() * (max - min + 1));
 
-	if (!words.length) return "";
+  while (word.length < target) {
+    const next = model.transitions.get(pair);
+    word += next && next.length ? pick(next) : pick(model.fallbackAlphabet);
+    pair = word.slice(-2);
+  }
 
-	const starts = words.map(word => word.slice(0, 2));
-
-	const latinCount = (normalized.match(/[a-z]/g) || []).length;
-	const cyrillicCount = (normalized.match(/[а-яё]/g) || []).length;
-
-	const fallbackAlphabet =
-		latinCount >= cyrillicCount
-			? "abcdefghijklmnopqrstuvwxyz"
-			: "абвгдежзийклмнопрстуфхцчшщыэюя";
-
-	let pair = pick(starts);
-	let word = pair;
-
-	const target = min + Math.floor(activeRng() * (max - min + 1));
-
-	while (word.length < target) {
-		const next = words.flatMap(candidate => {
-			const hits = [];
-
-			for (let index = 0; index < candidate.length - 2; index++) {
-				if (candidate.slice(index, index + 2) === pair) {
-					hits.push(candidate[index + 2]);
-				}
-			}
-
-			return hits;
-		});
-
-		const char = next.length
-			? pick(next)
-			: pick(fallbackAlphabet.split(""));
-
-		word += char;
-		pair = word.slice(-2);
-	}
-
-	return word;
+  return word;
 }
 function targetTelegramUsernameFor(index = activeListingIndex) {
   const match = initialHashState.seed.match(/^u:([a-zA-Z0-9_]{4,32})(?::[0-9a-zA-Z]{4})?(?::([0-9]+))?$/);
@@ -858,7 +865,6 @@ function appendCard(item, index) {
     tabs.appendChild(makeTabElement(tab));
   });
   board.appendChild(node);
-  cardObserver.observe(article);
   renderedCount += 1;
 }
 
@@ -887,14 +893,6 @@ function makeBatch(size = 18, filters = currentFilters()) {
 
 let resetToken = 0;
 let resetTimer = 0;
-
-let hashUpdateTimer = 0;
-function rememberScrollIndex(index, cardId = "") {
-  window.clearTimeout(hashUpdateTimer);
-  hashUpdateTimer = window.setTimeout(() => {
-    history.replaceState(null, "", formatHashState(initialHashState.seed, index));
-  }, 120);
-}
 
 function highlightCard(card) {
   if (!card) return;
@@ -938,12 +936,12 @@ function resetFeed() {
 
   const pump = (remaining = 24) => {
     if (token !== resetToken || remaining <= 0) return;
-    makeBatch(Math.min(8, remaining), filters);
-    requestAnimationFrame(() => pump(remaining - 8));
+    makeBatch(Math.min(6, remaining), filters);
+    requestAnimationFrame(() => pump(remaining - 6));
   };
 
   requestAnimationFrame(() => {
-    pump(Math.max(24, initialHashState.scrollIndex + 24));
+    pump(Math.max(12, initialHashState.scrollIndex + 12));
     scrollToInitialIndex(token);
   });
 }
@@ -954,15 +952,9 @@ function scheduleReset() {
 }
 
 const sentinelObserver = new IntersectionObserver((entries) => {
-  if (entries.some((entry) => entry.isIntersecting)) makeBatch(18);
+  if (entries.some((entry) => entry.isIntersecting)) makeBatch(12);
 }, { rootMargin: "1400px 0px" });
 
-const cardObserver = new IntersectionObserver((entries) => {
-  const visible = entries
-    .filter((entry) => entry.isIntersecting)
-    .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-  if (visible) rememberScrollIndex(Number(visible.target.dataset.index || 0), visible.target.id);
-}, { threshold: [0.45, 0.7] });
 
 searchInput.addEventListener("input", scheduleReset);
 categoryFilter.addEventListener("change", scheduleReset);
