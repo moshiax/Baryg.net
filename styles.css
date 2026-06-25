@@ -154,6 +154,15 @@ h2 { margin: 0; font-size: clamp(1.5rem, 3vw, 2.4rem); line-height: 1.05; letter
     0 24px 54px rgba(0,0,0,.5),
     0 0 0 3px rgba(197, 9, 36, .32);
 }
+
+.card.is-hash-target {
+  border-color: #ff4054;
+  box-shadow:
+    0 24px 58px rgba(0,0,0,.58),
+    0 0 0 4px rgba(255, 64, 84, .55),
+    0 0 34px var(--blood-glow);
+}
+
 .card::before {
   content: '';
   position: absolute;

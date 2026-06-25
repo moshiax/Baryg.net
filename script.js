@@ -1,3 +1,157 @@
+const chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+const HASH_DEFAULT_SCROLL_INDEX = 0;
+const HASH_RANDOM_PREFIX = "~";
+const HASH_TELEGRAM_PREFIX = "x";
+const HASH_CARD_PREFIX = "ad-";
+const TELEGRAM_HASH_NONCE_LENGTH = 4;
+const USERNAME_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
+
+function bytesToBigIntTagged(bytes) {
+  return BigInt("0x" + [1, ...bytes].map(b => b.toString(16).padStart(2, "0")).join(""));
+}
+
+function encodeBaseN(bytes, alphabet) {
+  let num = bytesToBigIntTagged(bytes);
+  let encoded = "";
+  const base = BigInt([...alphabet].length);
+  const symbols = [...alphabet];
+
+  while (num > 0n) {
+    encoded = symbols[Number(num % base)] + encoded;
+    num /= base;
+  }
+
+  return encoded || symbols[0];
+}
+
+function randomSeedText() {
+  const bytes = new Uint8Array(10);
+  crypto.getRandomValues(bytes);
+  return encodeBaseN(bytes, chars).replace(/^0+/, "") || "0";
+}
+
+function normalizeCardId(value, scrollIndex = HASH_DEFAULT_SCROLL_INDEX) {
+  const safeIndex = Math.max(0, Number.isSafeInteger(scrollIndex) ? scrollIndex : HASH_DEFAULT_SCROLL_INDEX);
+  const cardId = String(value || "").trim();
+  return /^ad-\d+$/.test(cardId) ? cardId : `${HASH_CARD_PREFIX}${safeIndex}`;
+}
+
+function parseHashIndex(value) {
+  const scrollIndex = Number.parseInt(value || "0", 36);
+  return Number.isSafeInteger(scrollIndex) && scrollIndex >= 0 ? scrollIndex : null;
+}
+
+function formatHashIndex(scrollIndex) {
+  const safeIndex = Math.max(0, Number.isSafeInteger(scrollIndex) ? scrollIndex : scrollIndex | 0);
+  return safeIndex.toString(36);
+}
+
+function telegramShift(nonce, charIndex, scrollIndex) {
+  return hashText32(`${nonce}:${scrollIndex}:${charIndex}`) % USERNAME_CHARS.length;
+}
+
+function telegramHashSignature(username, nonce, scrollIndex) {
+  return (hashText32(`${username}:${nonce}:${scrollIndex}`) % 1679616).toString(36).padStart(4, "0");
+}
+
+function encodeTelegramUsername(username, nonce = randomSeedText().slice(0, TELEGRAM_HASH_NONCE_LENGTH), scrollIndex = HASH_DEFAULT_SCROLL_INDEX) {
+  return [...username].map((char, index) => {
+    const charIndex = USERNAME_CHARS.indexOf(char);
+    if (charIndex < 0) throw new Error("Telegram username contains unsupported symbols.");
+    return USERNAME_CHARS[(charIndex + telegramShift(nonce, index, scrollIndex)) % USERNAME_CHARS.length];
+  }).join("");
+}
+
+function decodeTelegramUsername(payload, nonce, scrollIndex = HASH_DEFAULT_SCROLL_INDEX) {
+  return [...payload].map((char, index) => {
+    const charIndex = USERNAME_CHARS.indexOf(char);
+    if (charIndex < 0) return "";
+    return USERNAME_CHARS[(charIndex - telegramShift(nonce, index, scrollIndex) + USERNAME_CHARS.length) % USERNAME_CHARS.length];
+  }).join("");
+}
+
+function parseHashState() {
+  const raw = decodeURIComponent(window.location.hash.slice(1));
+  if (!raw) return null;
+
+  const separatorIndex = raw.lastIndexOf(".");
+  const seedPart = separatorIndex >= 0 ? raw.slice(0, separatorIndex) : raw;
+  const indexPart = separatorIndex >= 0 ? raw.slice(separatorIndex + 1) : "0";
+  const scrollIndex = parseHashIndex(indexPart);
+  if (scrollIndex === null) return null;
+
+  if (seedPart.startsWith(HASH_TELEGRAM_PREFIX)) {
+    const encoded = seedPart.slice(HASH_TELEGRAM_PREFIX.length);
+    const nonce = encoded.slice(0, TELEGRAM_HASH_NONCE_LENGTH);
+    const scopedPayload = encoded.slice(TELEGRAM_HASH_NONCE_LENGTH);
+    const [payload, embeddedIndexPart = "0", signature = ""] = scopedPayload.split("-");
+    const embeddedIndex = parseHashIndex(embeddedIndexPart);
+    if (
+      !/^[0-9a-zA-Z]{4}$/.test(nonce) ||
+      !/^[a-zA-Z0-9_]{4,32}$/.test(payload) ||
+      embeddedIndex === null ||
+      embeddedIndex !== scrollIndex ||
+      !/^[0-9a-z]{4}$/.test(signature)
+    ) return null;
+    const username = decodeTelegramUsername(payload, nonce, embeddedIndex);
+    if (!/^[a-zA-Z0-9_]{4,32}$/.test(username) || signature !== telegramHashSignature(username, nonce, embeddedIndex)) return null;
+    return { seed: `u:${username}:${nonce}:${embeddedIndex}`, scrollIndex, cardId: normalizeCardId("", scrollIndex) };
+  }
+
+  if (seedPart.startsWith(HASH_RANDOM_PREFIX)) {
+    const seed = seedPart.slice(HASH_RANDOM_PREFIX.length);
+    if (!/^[0-9a-zA-Z]+$/.test(seed)) return null;
+    return { seed, scrollIndex, cardId: normalizeCardId("", scrollIndex) };
+  }
+
+  return null;
+}
+
+function formatHashState(seed, scrollIndex) {
+  const safeIndex = Math.max(0, Number.isSafeInteger(scrollIndex) ? scrollIndex : scrollIndex | 0);
+  const indexText = formatHashIndex(safeIndex);
+  const indexPart = safeIndex ? `.${indexText}` : "";
+  const telegram = String(seed).match(/^u:([a-zA-Z0-9_]{4,32})(?::([0-9a-zA-Z]{4}))?(?::([0-9]+))?$/);
+  if (telegram) {
+    const nonce = telegram[2] || randomSeedText().slice(0, TELEGRAM_HASH_NONCE_LENGTH);
+    const payload = encodeTelegramUsername(telegram[1], nonce, safeIndex);
+    const signature = telegramHashSignature(telegram[1], nonce, safeIndex);
+    return `#${HASH_TELEGRAM_PREFIX}${nonce}${payload}-${indexText}-${signature}${indexPart}`;
+  }
+  return `#${HASH_RANDOM_PREFIX}${String(seed).replace(/[^0-9a-zA-Z]/g, "") || randomSeedText()}${indexPart}`;
+}
+
+const parsedHashState = parseHashState();
+const initialHashState = parsedHashState || { seed: randomSeedText(), scrollIndex: HASH_DEFAULT_SCROLL_INDEX, cardId: normalizeCardId("", HASH_DEFAULT_SCROLL_INDEX) };
+if (!parsedHashState) {
+  history.replaceState(null, "", formatHashState(initialHashState.seed, initialHashState.scrollIndex));
+}
+
+function hashText32(text) {
+  let hash = 2166136261;
+  for (const char of String(text)) {
+    hash ^= char.codePointAt(0);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash >>> 0;
+}
+
+function makeRng(seedText, stream = 0) {
+  let state = (hashText32(`${seedText}:${stream}`) || 0x9e3779b9) >>> 0;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+let activeRng = makeRng(initialHashState.seed);
+const withRng = (rng, callback) => {
+  const previous = activeRng;
+  activeRng = rng;
+  try { return callback(); } finally { activeRng = previous; }
+};
+
 const HORROR_PALETTES = [
   { bg: "#050506", fog: "#17171a", blood: "#b00020", bone: "#f2eee6", ash: "#6d6d72" },
   { bg: "#090608", fog: "#201114", blood: "#d11124", bone: "#fff8ef", ash: "#7b7376" },
@@ -13,7 +167,7 @@ const escapeSvg = (value) => String(value)
   .replace(/'/g, "&apos;");
 
 function hashText(text) {
-  return [...String(text)].reduce((hash, char) => ((hash << 5) - hash + char.charCodeAt(0)) | 0, 0);
+  return hashText32(text);
 }
 
 function wrapSvgText(text, maxLineLength = 20, maxLines = 3) {
@@ -305,15 +459,16 @@ const warning = document.getElementById("warning");
 let renderedCount = 0;
 let generatedCount = 0;
 let generatedFingerprints = new Set();
+let activeListingIndex = HASH_DEFAULT_SCROLL_INDEX;
 
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const chance = (percent) => Math.random() * 100 < percent;
+const pick = (arr) => arr[Math.floor(activeRng() * arr.length)];
+const chance = (percent) => activeRng() * 100 < percent;
 const cap = (text) => text.charAt(0).toUpperCase() + text.slice(1);
-const phone = () => `+7 (${900 + Math.floor(Math.random() * 99)}) ${100 + Math.floor(Math.random() * 900)}-${10 + Math.floor(Math.random() * 90)}-${10 + Math.floor(Math.random() * 90)}`;
+const phone = () => `+7 (${900 + Math.floor(activeRng() * 99)}) ${100 + Math.floor(activeRng() * 900)}-${10 + Math.floor(activeRng() * 90)}-${10 + Math.floor(activeRng() * 90)}`;
 
 function makeClockTime() {
-  const hour = String(Math.floor(Math.random() * 6) + (chance(70) ? 0 : 21)).padStart(2, "0");
-  const minute = String(Math.floor(Math.random() * 60)).padStart(2, "0");
+  const hour = String(Math.floor(activeRng() * 6) + (chance(70) ? 0 : 21)).padStart(2, "0");
+  const minute = String(Math.floor(activeRng() * 60)).padStart(2, "0");
   return `в ${hour}:${minute}`;
 }
 
@@ -353,7 +508,7 @@ function markovWord(source, min = 5, max = 12) {
 	let pair = pick(starts);
 	let word = pair;
 
-	const target = min + Math.floor(Math.random() * (max - min + 1));
+	const target = min + Math.floor(activeRng() * (max - min + 1));
 
 	while (word.length < target) {
 		const next = words.flatMap(candidate => {
@@ -378,7 +533,26 @@ function markovWord(source, min = 5, max = 12) {
 
 	return word;
 }
-function telegramUsername(min = 6, max = 20) {
+function targetTelegramUsernameFor(index = activeListingIndex) {
+  const match = initialHashState.seed.match(/^u:([a-zA-Z0-9_]{4,32})(?::[0-9a-zA-Z]{4})?(?::([0-9]+))?$/);
+  const targetIndex = match && match[2] ? Number.parseInt(match[2], 10) : initialHashState.scrollIndex;
+  return match && index === targetIndex && index === initialHashState.scrollIndex ? match[1] : "";
+}
+
+function babelTelegramUsername(min = 6, max = 20) {
+  const length = min + Math.floor(activeRng() * (max - min + 1));
+  const firstChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  let username = pick(firstChars.split(""));
+  for (let index = 1; index < length; index += 1) {
+    username += pick(USERNAME_CHARS.split(""));
+  }
+  return username;
+}
+
+function telegramUsername(min = 6, max = 20, index = activeListingIndex) {
+  const targetUsername = targetTelegramUsernameFor(index);
+  if (targetUsername) return targetUsername;
+
 	const corpus = [
 		"shadow", "phantom", "whisper", "forgotten", "hollow",
 		"signal", "corridor", "archive", "watcher", "keeper",
@@ -388,7 +562,7 @@ function telegramUsername(min = 6, max = 20) {
 		"lantern", "observer", "nameless", "scarlet", "frozen"
 	];
 
-	if (chance(75)) {
+	if (chance(80)) {
 		let username = markovWord(corpus, 6, 14);
 
 		if (chance(40)) {
@@ -396,29 +570,13 @@ function telegramUsername(min = 6, max = 20) {
 		}
 
 		if (chance(35)) {
-			username += "_" + Math.floor(10 + Math.random() * 9999);
+			username += "_" + Math.floor(10 + activeRng() * 9999);
 		}
 
 		return username.slice(0, max);
 	}
 
-	const starts = [
-		"dark", "night", "quiet", "cellar", "odd", "back",
-		"red", "fog", "cheap", "local", "after", "cold"
-	];
-
-	const middles = [
-		"market", "runner", "repair", "agent", "door",
-		"parcel", "signal", "shift", "trade", "clinic",
-		"finder", "vault"
-	];
-
-	const base = `${pick(starts)}_${pick(middles)}`;
-	const suffix = chance(50)
-		? Math.floor(10 + Math.random() * 9999)
-		: pick(["net", "x", "24", "bot", "line"]);
-
-	return `${base}_${suffix}`.slice(0, max);
+	return babelTelegramUsername(min, max);
 }
 
 function generatedProvider(category = "service") {
@@ -436,7 +594,7 @@ function generatedPlace() {
 
 function generatedPrice(category) {
   if (category === "lost") return chance(45) ? pick(rewardTypes) : `${mysteryNumber()} ₽ нашедшему`;
-  if (chance(55)) return `${pick(["от", "до", "ровно", "почти"])} ${Math.floor(2 + Math.random() * 88) * 100} ₽ ${pick(["", "за мешок", "за визит", "и тишина", "без сдачи"] )}`.trim();
+  if (chance(55)) return `${pick(["от", "до", "ровно", "почти"])} ${Math.floor(2 + activeRng() * 88) * 100} ₽ ${pick(["", "за мешок", "за визит", "и тишина", "без сдачи"] )}`.trim();
   return pick(pricePhrases);
 }
 
@@ -579,22 +737,55 @@ function buildDescription(category) {
 	return `${pick(context[category])}. ${pick(middle)}. ${pick(endings)}${extra}`;
 }
 
-function generateListing() {
-  const category = pick(categories);
-  const title = smartTitle(category);
-  const org = chance(55) ? generatedProvider(category) : pick([...providerNames, ...titlePeople, ...personNames]);
-  const desc = buildDescription(category);
-  const meta = `${pick(metaLines)} · ${generatedPlace()} · ${pick(guarantees)}`;
-  return {
-    title,
-    desc,
-    category,
-    price: generatedPrice(category),
-    meta,
-    urgent: chance(22),
-    image: art(title),
-    tabs: [phone(), `${pick(phoneTags)}: ${chance(60) ? phone() : pick(schedules)}`, chance(38) ? `Telegram: @${telegramUsername()}` : pick(contactNotes), `${org} · ${pick(restrictions)}`]
-  };
+function contactTelegramTab(index = activeListingIndex) {
+  const targetUsername = targetTelegramUsernameFor(index);
+  if (targetUsername || chance(80)) return `Telegram: @${telegramUsername(6, 20, index)}`;
+  return pick(contactNotes);
+}
+
+function normalizeTelegramUsername(value) {
+  const username = String(value || "").trim().replace(/^@/, "");
+  if (!/^[a-zA-Z0-9_]{4,32}$/.test(username)) {
+    throw new Error("Telegram username must contain 4-32 letters, digits or underscores.");
+  }
+  return username;
+}
+
+function makeTelegramHash(username, scrollIndex = HASH_DEFAULT_SCROLL_INDEX) {
+  const safeIndex = Math.max(0, scrollIndex | 0);
+  const nonce = randomSeedText().slice(0, TELEGRAM_HASH_NONCE_LENGTH);
+  return formatHashState(`u:${normalizeTelegramUsername(username)}:${nonce}:${safeIndex}`, safeIndex);
+}
+
+window.gethash = function gethash(username, scrollIndex = HASH_DEFAULT_SCROLL_INDEX) {
+  return makeTelegramHash(username, scrollIndex);
+};
+
+function generateListing(index = generatedCount) {
+  return withRng(makeRng(initialHashState.seed, index), () => {
+    const previousListingIndex = activeListingIndex;
+    activeListingIndex = index;
+
+    try {
+      const category = pick(categories);
+      const title = smartTitle(category);
+      const org = chance(55) ? generatedProvider(category) : pick([...providerNames, ...titlePeople, ...personNames]);
+      const desc = buildDescription(category);
+      const meta = `${pick(metaLines)} · ${generatedPlace()} · ${pick(guarantees)}`;
+      return {
+        title,
+        desc,
+        category,
+        price: generatedPrice(category),
+        meta,
+        urgent: chance(22),
+        image: art(title),
+        tabs: [phone(), `${pick(phoneTags)}: ${chance(60) ? phone() : pick(schedules)}`, contactTelegramTab(index), `${org} · ${pick(restrictions)}`]
+      };
+    } finally {
+      activeListingIndex = previousListingIndex;
+    }
+  });
 }
 
 
@@ -650,9 +841,11 @@ function matches(item, filters = currentFilters()) {
   return (filters.category === "all" || item.category === filters.category) && searchableText(item).includes(filters.term);
 }
 
-function appendCard(item) {
+function appendCard(item, index) {
   const node = template.content.cloneNode(true);
   const article = node.querySelector(".card");
+  article.dataset.index = String(index);
+  article.id = `ad-${index}`;
   article.classList.toggle("is-urgent", Boolean(item.urgent));
   node.querySelector(".thumb").src = item.image;
   node.querySelector(".chip").textContent = labels[item.category] || "Объявление";
@@ -665,6 +858,7 @@ function appendCard(item) {
     tabs.appendChild(makeTabElement(tab));
   });
   board.appendChild(node);
+  cardObserver.observe(article);
   renderedCount += 1;
 }
 
@@ -672,7 +866,8 @@ function makeBatch(size = 18, filters = currentFilters()) {
 	let guard = 0;
 
 	while (size > 0 && guard < 500) {
-		const item = generateListing();
+		const index = generatedCount;
+		const item = generateListing(index);
 
 		guard += 1;
 		generatedCount += 1;
@@ -685,13 +880,51 @@ function makeBatch(size = 18, filters = currentFilters()) {
 		if (generatedFingerprints.has(fingerprint)) continue;
 
 		generatedFingerprints.add(fingerprint);
-		appendCard(item);
+		appendCard(item, index);
 		size -= 1;
 	}
 }
 
 let resetToken = 0;
 let resetTimer = 0;
+
+let hashUpdateTimer = 0;
+function rememberScrollIndex(index, cardId = "") {
+  window.clearTimeout(hashUpdateTimer);
+  hashUpdateTimer = window.setTimeout(() => {
+    history.replaceState(null, "", formatHashState(initialHashState.seed, index));
+  }, 120);
+}
+
+function highlightCard(card) {
+  if (!card) return;
+  document.querySelectorAll(".card.is-hash-target").forEach((node) => node.classList.remove("is-hash-target"));
+  card.classList.add("is-hash-target");
+  card.setAttribute("tabindex", "-1");
+  card.focus({ preventScroll: true });
+}
+
+function scrollToInitialIndex(token) {
+  const targetIndex = initialHashState.scrollIndex;
+  const targetCardId = normalizeCardId(initialHashState.cardId, targetIndex);
+  if (!targetIndex && targetCardId === normalizeCardId("", HASH_DEFAULT_SCROLL_INDEX)) return;
+
+  const reachTarget = () => {
+    if (token !== resetToken) return;
+    const target = document.getElementById(targetCardId) || document.getElementById(`ad-${targetIndex}`);
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      window.setTimeout(() => highlightCard(target), 260);
+      return;
+    }
+    if (generatedCount <= targetIndex + 80) {
+      makeBatch(Math.max(8, Math.min(60, targetIndex + 24 - renderedCount)));
+      requestAnimationFrame(reachTarget);
+    }
+  };
+
+  requestAnimationFrame(reachTarget);
+}
 
 function resetFeed() {
   const token = ++resetToken;
@@ -709,7 +942,10 @@ function resetFeed() {
     requestAnimationFrame(() => pump(remaining - 8));
   };
 
-  requestAnimationFrame(() => pump());
+  requestAnimationFrame(() => {
+    pump(Math.max(24, initialHashState.scrollIndex + 24));
+    scrollToInitialIndex(token);
+  });
 }
 
 function scheduleReset() {
@@ -717,11 +953,18 @@ function scheduleReset() {
   resetTimer = window.setTimeout(resetFeed, 90);
 }
 
-const observer = new IntersectionObserver((entries) => {
+const sentinelObserver = new IntersectionObserver((entries) => {
   if (entries.some((entry) => entry.isIntersecting)) makeBatch(18);
 }, { rootMargin: "1400px 0px" });
 
+const cardObserver = new IntersectionObserver((entries) => {
+  const visible = entries
+    .filter((entry) => entry.isIntersecting)
+    .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+  if (visible) rememberScrollIndex(Number(visible.target.dataset.index || 0), visible.target.id);
+}, { threshold: [0.45, 0.7] });
+
 searchInput.addEventListener("input", scheduleReset);
 categoryFilter.addEventListener("change", scheduleReset);
-observer.observe(sentinel);
+sentinelObserver.observe(sentinel);
 resetFeed();
