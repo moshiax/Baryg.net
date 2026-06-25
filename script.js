@@ -302,7 +302,6 @@ const template = document.getElementById("cardTemplate");
 const sentinel = document.getElementById("sentinel");
 const slogan = document.getElementById("slogan");
 const warning = document.getElementById("warning");
-const shuffleBtn = document.getElementById("shuffleBtn");
 let renderedCount = 0;
 let generatedCount = 0;
 let generatedFingerprints = new Set();
@@ -490,6 +489,5 @@ const observer = new IntersectionObserver((entries) => {
 
 searchInput.addEventListener("input", resetFeed);
 categoryFilter.addEventListener("change", resetFeed);
-shuffleBtn.addEventListener("click", resetFeed);
 observer.observe(sentinel);
 resetFeed();
