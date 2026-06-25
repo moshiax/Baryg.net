@@ -331,33 +331,106 @@ function mysteryNumber() {
 }
 
 function markovWord(source, min = 5, max = 12) {
-  const words = source.join(" ").toLowerCase().replace(/[^а-яёa-z\s-]/g, "").split(/\s+/).filter((word) => word.length > 3);
-  const starts = words.map((word) => word.slice(0, 2));
-  let pair = pick(starts);
-  let word = pair;
-  const target = min + Math.floor(Math.random() * (max - min + 1));
-  while (word.length < target) {
-    const next = words.flatMap((candidate) => {
-      const hits = [];
-      for (let index = 0; index < candidate.length - 2; index += 1) {
-        if (candidate.slice(index, index + 2) === pair) hits.push(candidate[index + 2]);
-      }
-      return hits;
-    });
-    const char = next.length ? pick(next) : pick("абвгдежзиклмнопрстуфхшщыэюя".split(""));
-    word += char;
-    pair = word.slice(-2);
-  }
-  return word;
+	const normalized = source.join(" ").toLowerCase();
+
+	const words = normalized
+		.replace(/[^а-яёa-z\s-]/g, "")
+		.split(/\s+/)
+		.filter(word => word.length > 3);
+
+	if (!words.length) return "";
+
+	const starts = words.map(word => word.slice(0, 2));
+
+	const latinCount = (normalized.match(/[a-z]/g) || []).length;
+	const cyrillicCount = (normalized.match(/[а-яё]/g) || []).length;
+
+	const fallbackAlphabet =
+		latinCount >= cyrillicCount
+			? "abcdefghijklmnopqrstuvwxyz"
+			: "абвгдежзийклмнопрстуфхцчшщыэюя";
+
+	let pair = pick(starts);
+	let word = pair;
+
+	const target = min + Math.floor(Math.random() * (max - min + 1));
+
+	while (word.length < target) {
+		const next = words.flatMap(candidate => {
+			const hits = [];
+
+			for (let index = 0; index < candidate.length - 2; index++) {
+				if (candidate.slice(index, index + 2) === pair) {
+					hits.push(candidate[index + 2]);
+				}
+			}
+
+			return hits;
+		});
+
+		const char = next.length
+			? pick(next)
+			: pick(fallbackAlphabet.split(""));
+
+		word += char;
+		pair = word.slice(-2);
+	}
+
+	return word;
+}
+function telegramUsername(min = 6, max = 20) {
+	const corpus = [
+		"shadow", "phantom", "whisper", "forgotten", "hollow",
+		"signal", "corridor", "archive", "watcher", "keeper",
+		"midnight", "ashen", "catacomb", "omen", "cipher",
+		"ritual", "specter", "frequency", "district", "transit",
+		"memory", "paradox", "vault", "echo", "veil",
+		"lantern", "observer", "nameless", "scarlet", "frozen"
+	];
+
+	if (chance(75)) {
+		let username = markovWord(corpus, 6, 14);
+
+		if (chance(40)) {
+			username += "_" + markovWord(corpus, 4, 10);
+		}
+
+		if (chance(35)) {
+			username += "_" + Math.floor(10 + Math.random() * 9999);
+		}
+
+		return username.slice(0, max);
+	}
+
+	const starts = [
+		"dark", "night", "quiet", "cellar", "odd", "back",
+		"red", "fog", "cheap", "local", "after", "cold"
+	];
+
+	const middles = [
+		"market", "runner", "repair", "agent", "door",
+		"parcel", "signal", "shift", "trade", "clinic",
+		"finder", "vault"
+	];
+
+	const base = `${pick(starts)}_${pick(middles)}`;
+	const suffix = chance(50)
+		? Math.floor(10 + Math.random() * 9999)
+		: pick(["net", "x", "24", "bot", "line"]);
+
+	return `${base}_${suffix}`.slice(0, max);
 }
 
-function generatedProvider() {
-  const prefixes = ["ООО", "ИП", "Сервис", "Бюро", "Комитет", "Артель", "Лавка", "Центр"];
-  return chance(45) ? `${pick(prefixes)} ${cap(markovWord(providerNames))} и ${cap(markovWord([...weirdNouns, ...titleObjects]))}` : pick(providerNames);
+function generatedProvider(category = "service") {
+  if (chance(42)) return pick(providerNames);
+  if (chance(55)) return `${pick(legal)} «${pick(tones)} ${pick(cores)}»`;
+  return `${pick(legal)} ${pick(industries[category] || industries.service)} «${pick(tones)} ${pick(cores)}»`;
 }
 
 function generatedPlace() {
-  const base = chance(42) ? `${pick(["у", "возле", "под", "за", "в районе"])} ${pick(weirdAdjectives)} ${pick(weirdNouns)}` : pick(places);
+  const base = chance(28)
+    ? `${pick(["у", "возле", "под", "за", "в районе"])} ${pick(weirdAdjectives)} ${pick(weirdNouns)}`
+    : pick(places);
   return chance(35) ? `${base}, ${pick(["подъезд", "секция", "склад", "павильон"])} ${mysteryNumber()}` : base;
 }
 
@@ -368,25 +441,160 @@ function generatedPrice(category) {
 }
 
 function smartTitle(category) {
-  const noun = pick([...titleObjects, ...wantedThings, ...tradedThings, ...impossibleThings, `${pick(weirdAdjectives)} ${markovWord([...weirdNouns, ...titleObjects])}`]);
-  const variants = {
-    service: [`${pick([...verbsRepair, ...verbsRemove, ...verbsInstall])} ${noun} ${generatedPlace()}`, `${generatedProvider()}: ${pick(weirdProcesses)}`],
-    lost: [`Пропал ${pick(lostThings)} ${generatedPlace()}`, `Нашли ${pick(weirdAdjectives)} ${pick(weirdNouns)}. Это ваше?`],
-    medical: [`${pick(personNames)} — ${pick(clinicMethods)}`, `${pick(titleActions)} ${pick(bodyParts)} без очереди`],
-    food: [`Домашнее МЯСО и ${pick(abstractThings)}`, `${pick(verbsSell)} ${pick(weirdAdjectives)} обед ${mysteryTime()}`],
-    mystic: [`${pick(eventNames)}: ${pick(titleEvents)}`, `${cap(pick(weirdPhenomena))} — срочный выезд`],
-    trade: [`${pick([...verbsBuy, ...verbsSell])} ${noun}`, `Обмен: ${pick(tradedThings)} на ${pick(wantedThings)}`]
-  };
-  return pick(variants[category]);
+	const noun = pick([
+		...titleObjects,
+		...wantedThings,
+		...tradedThings,
+		...impossibleThings,
+		`${pick(weirdAdjectives)} ${pick(weirdNouns)}`
+	]);
+
+	const place = chance(58) ? generatedPlace() : pick(titlePlaces);
+	const provider = generatedProvider(category);
+
+	const variants = {
+		service: [
+			`${cap(pick([...verbsRepair, ...verbsRemove, ...verbsInstall]))} ${noun} ${place}`,
+			`${provider}: ${pick(weirdProcesses)}`,
+			`${cap(pick(descActions))}: ${pick(titleObjects)} под ключ`,
+			`${cap(pick([...verbsRepair, ...verbsInstall]))} ${pick(titleObjects)} без лишних вопросов`,
+			`${provider} — выезд ${place}`,
+			`${pick(titleObjects)}: диагностика и настройка`,
+			`Срочно: ${pick(titleObjects)} ${place}`,
+			`${cap(pick(descActions))} ${pick(impossibleThings)}`
+		],
+
+		lost: [
+			`Пропал ${pick(lostThings)} ${place}`,
+			`Нашли ${pick(weirdAdjectives)} ${pick(weirdNouns)}. Опишите, если ваше`,
+			`Ищу ${pick(lostThings)}`,
+			`${pick(lostThings)} вернулся, но ведёт себя странно`,
+			`Кто потерял ${pick(titleObjects)}?`,
+			`Замечен ${pick(lostThings)} ${place}`,
+			`Вознаграждение за ${pick(lostThings)}`,
+			`Разыскивается: ${pick(weirdAdjectives)} ${pick(weirdNouns)}`
+		],
+
+		medical: [
+			`${pick(personNames)} — ${pick(clinicMethods)}`,
+			`${cap(pick(clinicMethods))}: запись открыта`,
+			`${provider}: осмотр ${pick(bodyParts)} без очереди`,
+			`${pick(bodyParts)} беспокоит? Приходите`,
+			`Консультация: ${pick(bodyParts)} и не только`,
+			`${provider} — приём сегодня`,
+			`Осмотр без направления`,
+			`${pick(clinicMethods)} рядом с вами`
+		],
+
+		food: [
+			`Домашнее МЯСО и ${pick(abstractThings)} с доставкой`,
+			`${cap(pick(verbsSell))} ${pick(weirdAdjectives)} обед`,
+			`Ночной набор: ${pick(wantedThings)} + гарнир из ${pick(abstractThings)}`,
+			`Горячая еда ${place}`,
+			`${pick(weirdAdjectives)} пироги на заказ`,
+			`Свежая выпечка без ожидания`,
+			`${provider}: доставка до двери`,
+			`Ужин для тех, кто не спит`
+		],
+
+		mystic: [
+			`${pick(eventNames)}: ${pick(titleEvents)}`,
+			`${cap(pick(weirdPhenomena))} — выезд мастера`,
+			`${provider}: консультация, если дома стало слишком тихо`,
+			`Объясним ${pick(weirdPhenomena)}`,
+			`Снятие последствий ${pick(eventNames)}`,
+			`${pick(weirdNouns)} в доме? Есть решение`,
+			`Диагностика странных случаев`,
+			`Работаем даже после полуночи`,
+			`${pick(titleEvents)} без свидетелей`,
+			`${provider}: опыт более 20 лет`
+		],
+
+		trade: [
+			`${cap(pick([...verbsBuy, ...verbsSell]))} ${noun}`,
+			`Обмен: ${pick(tradedThings)} на ${pick(wantedThings)}`,
+			`${provider}: оценка ${pick(impossibleThings)} при вас`,
+			`Куплю ${pick(wantedThings)} дорого`,
+			`Продам ${pick(tradedThings)} срочно`,
+			`${pick(tradedThings)} в хорошие руки`,
+			`Интересует ${pick(impossibleThings)}`,
+			`Обмен без посредников`,
+			`${provider}: честная оценка`,
+			`Скупка ${pick(titleObjects)}`
+		]
+	};
+
+	return pick(variants[category]);
+}
+
+function buildDescription(category) {
+	const endings = [
+		`${cap(pick(descConditions))}. ${pick(descWarnings)}.`,
+		`${cap(pick(descPromises))}; ${pick(descConditions)}.`,
+		`Ориентир: ${generatedPlace()}. ${cap(pick(contactNotes).toLowerCase())}.`,
+		`Код: ${mysteryNumber()}. ${pick(descWarnings)}.`,
+		`Фигурирует ${pick(weirdNouns)}.`,
+		`Отмечено как ${pick(abstractThings)}.`,
+		`Локация: ${generatedPlace().toLowerCase()}.`,
+		`${pick(restrictions)}. ${pick(contactNotes)}.`
+	];
+
+	const middle = [
+		`${pick(descActions)}: ${pick(descPromises)}`,
+		`${pick(descActions)} без лишних вопросов`,
+		`${pick(descPromises)} при соблюдении условий`,
+		`${pick(descWarnings)}`,
+		`Подробности уточняются при обращении`,
+		`Есть особенности, информация предоставляется отдельно`,
+		`${pick(descConditions)}`,
+		`Возможны дополнительные требования`,
+		`Работа ведётся аккуратно`,
+		`Результат зависит от обстоятельств`,
+		`Заявки рассматриваются индивидуально`,
+		`Опыт подтверждён предыдущими случаями`,
+		`Используются проверенные методы`,
+		`${pick(eventNames)} всё ещё влияет на ситуацию`,
+		`Связано с ${pick(titleObjects)}`,
+	];
+
+	const details = [
+		() => `${pick(descActions)} ${mysteryTime()}`,
+		() => `Номер: ${mysteryNumber()}`,
+		() => `Ориентир: ${generatedPlace()}`,
+		() => `Идентификатор: ${pick([...weirdNouns, ...abstractThings, ...eventNames])}`,
+		() => `Последняя точка: ${generatedPlace()}`,
+		() => `Связь: ${generatedProvider(category)}`,
+		() => `Регистрация: ${mysteryNumber()}`,
+		() => `Объект: ${pick(titleObjects)}`,
+		() => `Контакт: ${pick(personNames)}`,
+		() => `Маркер: ${pick(weirdAdjectives)} ${pick(weirdNouns)}`,
+		() => `Контекст: ${pick(eventNames).toLowerCase()}`,
+		() => `Примечание: ${pick(abstractThings)}`
+	];
+
+	const extra = chance(33)
+		? ` ${pick(details)()}.`
+		: '';
+
+	return `${pick(context[category])}. ${pick(middle)}. ${pick(endings)}${extra}`;
 }
 
 function generateListing() {
   const category = pick(categories);
   const title = smartTitle(category);
-  const org = chance(55) ? generatedProvider() : pick([...providerNames, ...titlePeople, ...personNames]);
-  const desc = `${cap(pick(descActions))} ${mysteryTime()}: ${pick(descPromises)}. ${cap(pick(descConditions))}. ${pick(descWarnings)}. Код ${mysteryNumber()}.`;
+  const org = chance(55) ? generatedProvider(category) : pick([...providerNames, ...titlePeople, ...personNames]);
+  const desc = buildDescription(category);
   const meta = `${pick(metaLines)} · ${generatedPlace()} · ${pick(guarantees)}`;
-  return { title, desc, category, price: generatedPrice(category), meta, image: art(title), tabs: [phone(), `${pick(phoneTags)}: ${chance(60) ? phone() : pick(schedules)}`, chance(38) ? `Telegram: @${markovWord([...providerNames, ...weirdNouns], 6, 10)}${Math.floor(Math.random() * 90)}` : pick(contactNotes), `${org} · ${pick(restrictions)}`] };
+  return {
+    title,
+    desc,
+    category,
+    price: generatedPrice(category),
+    meta,
+    urgent: chance(22),
+    image: art(title),
+    tabs: [phone(), `${pick(phoneTags)}: ${chance(60) ? phone() : pick(schedules)}`, chance(38) ? `Telegram: @${telegramUsername()}` : pick(contactNotes), `${org} · ${pick(restrictions)}`]
+  };
 }
 
 
@@ -429,14 +637,23 @@ function makeTabElement(tab) {
   return element;
 }
 
-function matches(item) {
-  const term = searchInput.value.trim().toLowerCase();
-  const category = categoryFilter.value;
-  return (category === "all" || item.category === category) && [item.title, item.desc, item.meta, item.price].join(" ").toLowerCase().includes(term);
+function currentFilters() {
+  return { term: searchInput.value.trim().toLowerCase(), category: categoryFilter.value };
+}
+
+function searchableText(item) {
+  if (!item.searchText) item.searchText = [item.title, item.desc, item.meta, item.price, ...item.tabs].join(" ").toLowerCase();
+  return item.searchText;
+}
+
+function matches(item, filters = currentFilters()) {
+  return (filters.category === "all" || item.category === filters.category) && searchableText(item).includes(filters.term);
 }
 
 function appendCard(item) {
   const node = template.content.cloneNode(true);
+  const article = node.querySelector(".card");
+  article.classList.toggle("is-urgent", Boolean(item.urgent));
   node.querySelector(".thumb").src = item.image;
   node.querySelector(".chip").textContent = labels[item.category] || "Объявление";
   node.querySelector(".price").textContent = item.price;
@@ -451,7 +668,7 @@ function appendCard(item) {
   renderedCount += 1;
 }
 
-function makeBatch(size = 18) {
+function makeBatch(size = 18, filters = currentFilters()) {
 	let guard = 0;
 
 	while (size > 0 && guard < 500) {
@@ -460,7 +677,7 @@ function makeBatch(size = 18) {
 		guard += 1;
 		generatedCount += 1;
 
-		if (!matches(item)) continue;
+		if (!matches(item, filters)) continue;
 
 		const fingerprint =
 			`${item.category}|${item.title}|${item.price}|${item.meta}`;
@@ -473,21 +690,38 @@ function makeBatch(size = 18) {
 	}
 }
 
+let resetToken = 0;
+let resetTimer = 0;
+
 function resetFeed() {
-  board.innerHTML = "";
+  const token = ++resetToken;
+  const filters = currentFilters();
+  board.replaceChildren();
   generatedFingerprints = new Set();
   renderedCount = 0;
   generatedCount = 0;
   slogan.textContent = pick(slogans);
   warning.textContent = pick(warnings);
-  makeBatch(24);
+
+  const pump = (remaining = 24) => {
+    if (token !== resetToken || remaining <= 0) return;
+    makeBatch(Math.min(8, remaining), filters);
+    requestAnimationFrame(() => pump(remaining - 8));
+  };
+
+  requestAnimationFrame(() => pump());
+}
+
+function scheduleReset() {
+  window.clearTimeout(resetTimer);
+  resetTimer = window.setTimeout(resetFeed, 90);
 }
 
 const observer = new IntersectionObserver((entries) => {
   if (entries.some((entry) => entry.isIntersecting)) makeBatch(18);
 }, { rootMargin: "1400px 0px" });
 
-searchInput.addEventListener("input", resetFeed);
-categoryFilter.addEventListener("change", resetFeed);
+searchInput.addEventListener("input", scheduleReset);
+categoryFilter.addEventListener("change", scheduleReset);
 observer.observe(sentinel);
 resetFeed();
